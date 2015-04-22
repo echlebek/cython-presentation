@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<head>
+  <meta charset="utf-8">
+
+  <title>Optimizing Python Programs with Cython</title>
+
+  <meta name="description" content="A presentation that explains how to profile, benchmark and optimize Python programs.">
+  <meta name="author" content="Eric Chlebek">
+
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, minimal-ui">
+
+  <link rel="stylesheet" href="css/reveal.css">
+  <link rel="stylesheet" href="css/theme/black.css" id="theme">
+
+  <!-- Code syntax highlighting -->
+  <link rel="stylesheet" href="lib/css/zenburn.css">
+
+  <!-- Printing and PDF exports -->
+  <script>
+    var link = document.createElement( 'link' );
+    link.rel = 'stylesheet';
+    link.type = 'text/css';
+    link.href = window.location.search.match( /print-pdf/gi ) ? 'css/print/pdf.css' : 'css/print/paper.css';
+    document.getElementsByTagName( 'head' )[0].appendChild( link );
+  </script>
+
+  <script src=""></script>
+</head>
+
+<body>
+  <div class="reveal">
+    <div class="slides">
+      <section>
+      <h1>Optimizing Python Programs with</h1>
+      <img src="./img/cython.svg" style="border: 0; background: rgba(255, 255, 255, 0); box-shadow: 0px 0px 0px"></img>
+      <h4>Eric Chlebek</h4>
+      </section>
+      <section>
+      <h4>About Me</h4>
+      <ul>
+        <li>Scientific software developer for 6 years</li>
+        <li>Python developer for 5 years</li>
+        <li>HPC, CLI apps, web apps, data analysis</li>
+        <li>Python, C/C++, Java, Go, SQL</li>
+      </ul>
+      </section>
+      <section>
+      <h4>Why Python for Scientific Computing?</h4>
+      <ul>
+        <li>Huge array of libraries and apps for scientists</li>
+        <ul>
+          <li>biopython</li>
+          <li>pymol</li>
+          <li>numpy</li>
+          <li>scikit-learn</li>
+          <li>matplotlib</li>
+        </ul>
+        <li>Easy to learn</li>
+        <li>Good integration with C</li>
+      </ul>
+      </section>
+      <section>
+      <h4>One big caveat...</h4>
+      <ul>
+        <li>Python is slow</li>
+        <li>10-100 times slower than C</li>
+        <li>Also slower than Ruby, JS, Clojure...</li>
+      </ul>
+      </section>
+      <section>
+      <h4>Mitigating Factors</h4>
+      <ul>
+        <li>most of CPython standard library written in C</li>
+        <li>numpy provides typed arrays and vectorization</li>
+        <li>Plenty of options for writing C or C++ modules</li>
+        <ul>
+          <li style="font-family: courier;">&ltPython.h&gt</li>
+          <li style="font-family: courier;">boost::python</li>
+          <li>pybindgen</li>
+          <li>Cython</li>
+        </ul>
+      </ul>
+      </section>
+      <section>
+      <h4>So what's the problem? Slow stuff:</h4>
+      <ul>
+        <li>iteration overhead</li>
+        <li>no control over alloc/dealloc</li>
+        <li>dynamic types == runtime overhead</li>
+      </ul>
+      </section>
+      <section>
+      <h4>Why is iteration slow?</h4>
+      </section>
+      <section>
+      <h4>C iteration</h4>
+      <pre>
+      <code data-trim content-editable>
+void iter() {
+    int data[1000];
+    for (int i = 0; i < 1000; ++i) {
+        data[i] = i * i;
+    }
+}
+      </code>
+      </pre>
+        <p>Cost of iteration: increment i, test i, jump</p>
+      </section>
+      <section>
+      <h4>Python Iteration</h4>
+      <pre>
+      <code data-trim content-editable>
+def iterate():
+    data = []
+    for i in xrange(1000):
+        data.append(i * i)
+      </code>
+      </pre>
+        <p>Cost of iteration:</p>
+        <ul>
+          <li>Check if the object under iteration implements the iterator protocol</li>
+          <li>Call next() on the iterator to get the next value</li>
+          <li>Handle StopIteration when the iterator is exhausted</li>
+        </ul>
+      </section>
+      <section>
+      <h4>Allocation</h4>
+      <ul>
+        <li>Python objects are fat</li>
+        <li>Even a simple int uses 24 bytes</li>
+        <li>Use numpy arrays to cut down memory use</li>
+      </ul>
+      </section>
+      <section>
+      <h4>Dynamic Types</h4>
+      <ul>
+        <li>Substantial runtime overhead</li>
+        <ul>
+          <li>Branching</li>
+          <li>Poor data locality</li>
+        </ul>
+      </ul>
+      <p>JIT can help here</p>
+      </section>
+      <section>
+      <h4><a href="https://github.com/echlebek/15puzz">Case Study: 15 Puzzle</a></h4>
+      <ul>
+        <li>Goal: implement a shortest-path solver for the <a href="https://en.wikipedia.org/wiki/15_puzzle">15 puzzle</a></li>
+        <li>Implementation: A* search using manhattan distance heuristic</li>
+        <li>With this algorithm, queue operations should dominate the profile</li>
+      </ul>
+      </section>
+      <section>
+      <h4><a href="test1.pdf">15 Puzzle Profile</a></h4>
+      </section>
+      <section>
+      <h4>Profile Analysis</h4>
+      <ul>
+        <li>Queue operations barely register</li>
+        <li>Bulk of time is spent in just one function!</li>
+        <li>Performance can be improved if manhattan_distance can be optimized</li>
+      </ul>
+      </section>
+      <section>
+      <h4>How do we deal with perf problems?</h4>
+      <p>1. Measure, Measure, Measure</p>
+      <ul>
+        <li>Profile</li>
+        <li>Isolate</li>
+        <li>Optimize</li>
+        <li>Benchmark</li>
+        <li>Repeat</li>
+      </ul>
+      </section>
+      <section>
+      <h4>How do we deal with perf problems?</h4>
+      <p>2. Target Hotspots</p>
+      <ul>
+        <li>Identify expensive functions that are compute bound</li>
+        <li>Look for trivial errors that cost time in hotspots before further work</li>
+        <ul>
+          <li>.keys() being called?</li>
+          <li>building a list backwards?</li>
+          <li>lame algorithm?</li>
+        </ul>
+      </ul>
+      </section>
+      <section>
+      <h4>How do we deal with perf problems?</h4>
+      <p>3. Use Numpy</p>
+      <ul>
+        <li>Typed, continguous arrays and scalars in Python</li>
+        <li>Lots of common algorithms available</li>
+        <li>Can avoid iteration via array broadcasting</li>
+        <li>Often powerful enough to not require further optimization</li>
+      </ul>
+      </section>
+      <section>
+      <h4>How do we deal with perf problems?</h4>
+      <p>4. Use Cython</p>
+      <ul>
+        <li>A superset of Python that compiles to C</li>
+        <li>With effort, can achieve C-like speed</li>
+        <li>Can interoperate with C libraries</li>
+      </ul>
+      </section>
+      <section>
+      <h4>Getting Started With Cython</h4>
+      <p>Tell setup.py to build Cython modules</p>
+      <code data-trim content-editable>
+        <pre>
+from setuptools import setup
+from setuptools.extension import Extension
+import numpy as np
+from Cython.Distutils import build_ext
+
+
+setup(
+    name="15puzz",
+    packages=["fifteen"],
+
+    # Use Cython.Distutils's build_ext command
+    cmdclass={"build_ext": build_ext},
+
+    # Specify extension modules here
+    ext_modules=[
+        Extension("_c15", ["fifteen/_c15.pyx"], [np.get_include()])
+    ]
+)
+        </pre>
+      </code>
+      </section>
+      <section>
+      <h4>So what does that result in?</h4>
+      <ul>
+        <li>When the package is built, _c15.pyx is compiled into a shared library</li>
+        <li>The shared library is an importable Python module</li>
+        <li>Python can use any Python definitions in _c15, but can't use any cdef definitions.</li>
+      </ul>
+      </section>
+      <section>
+      <h4>Move hotspot functions into a .pyx module</h4>
+      <code data-trim content-editable>
+        <pre>
+def manhattan_distance(board):
+    result = 0
+
+    for i in range(4):
+        for j in range(4):
+            for x in range(4):
+                for y in range(4):
+                    if board[i, j] == SOLVED[x, y]:
+                        result += abs(i - x) + abs(j - y)
+                        break
+                else:
+                    continue
+                break
+
+    return result
+        </pre>
+      </code>
+      </section>
+      <section>
+      <h4><a href="untyped.html">Cython annotated output</a></h4>
+      <div>
+      </div>
+      </section>
+      <section>
+      <h4>Use cdef to add type definitions</h4>
+      <code data-trim content-editable>
+        <pre>
+cimport numpy as np
+
+cdef int manhattan_distance(np.ndarray[np.int8_t, ndim=2] board,
+                            np.ndarray[np.int8_t, ndim=2] solved_board):
+    """Manhattan distance finds how many squares out of place each
+    value in `board` is. This is also known as "taxicab distance".
+    """
+    cdef int result = 0
+    cdef int i, j
+    cdef int x, y
+
+    # For each tile in the game
+    for i in range(4):
+        for j in range(4):
+
+            # For each tile in the solved game
+            for x in range(4):
+                for y in range(4):
+                    if board[i, j] == solved_board[x, y]:
+                        result += abs(i - x) + abs(j - y)
+                        break
+                else:
+                    continue
+                break
+
+    return result
+        </pre>
+      </code>
+      </section>
+      <section>
+      <h4><a href="typed.html">Cython annotated output</a></h4>
+      <div>
+      </div>
+      </section>
+      <section>
+      <h4>Big Improvement</h4>
+      <ul>
+        <li>Much less yellow! Cython has reduced most code to simple C</li>
+        <li>Now that the function is declared as cdef, we can't use it in Python</li>
+        <li>We'll move some of the other functions over as well, especially moves</li>
+        <li>The search function will be moved into the Cython module as well, but not declared as cdef</li>
+      </ul>
+      </section>
+      <section>
+      <h4>Range</h4>
+      <ul>
+        <li>range in Python creates a list</li>
+        <li>range in Cython is compiled to a for loop</li>
+        <li>Don't use xrange in Cython</li>
+      </ul>
+      </section>
+      <section>
+      <h4>Numpy Arrays & Cython</h4>
+      <ul>
+        <li>Cython can pass numpy arrays between C functions with minimal overhead.</li>
+        <li>Use numpy.ndarray datatype with type parameters to remove guesswork at runtime.</li>
+        <li>Accessing array elements is cheap, but using array methods can be costly.</li>
+      </ul>
+      <pre>
+      <code>
+cdef foo(np.ndarray[np.int, ndim=2] a): pass
+      </code>
+      </pre>
+      <p>Above, a Cython function which takes a numpy int array as a parameter.</p>
+      </section>
+      <section>
+      <h4>Profiling Cython</h4>
+      <p>When profiling of Cython functions is desired, add the following to the top of the Cython module:</p>
+      <pre>
+      <code>
+# cython: profile=True
+      </code>
+      </pre>
+      <p>Then, profile as usual.</p>
+      <p>Profiling comes at a cost, so disable this once you're done profiling.</p>
+      </section>
+      <section>
+      <h4><a href="https://github.com/echlebek/15puzz/tree/master/fifteen/__init__.py">Pure Python Code</a></h4>
+      <h4><a href="https://github.com/echlebek/15puzz/tree/master/fifteen/_c15.pyx">Cython Code</a></h4>
+      <h4><a href="_c15.html">Annotated Cython Code</a></h4>
+      </section>
+      <section>
+      <h4><a href="test2.pdf">Final 15 Puzzle Profile</a></h4>
+      </section>
+      <section>
+      <h4>Profile Analysis</h4>
+      <ul>
+        <li>Much better queue utilization</li>
+        <li>manhattan_distance is consuming much less time</li>
+        <li>Can only get the overall algorithm 2x faster without replacing queue</li>
+      </ul>
+      </section>
+      <section>
+      <h4>Can we do better?</h4>
+      <ul>
+        <li>Yes, with more effort</li>
+        <li>Could write whole thing in Cython, including queue</li>
+        <li>Or, could write whole thing in C, and bind via Cython</li>
+        <li>Cost/benefit analysis required</li>
+      </ul>
+      </section>
+      <section>
+      <h4>Addendum: Avoiding the Global Interpreter Lock</h4>
+      <pre>
+      <code data-trim content-editable>
+cdef int foo(int bar) nogil:
+  return bar + 1
+      </code>
+      </pre>
+      <p>If you're doing multithreaded programming, you might see a performance boost by using nogil. You can annotate your cdef functions with nogil if:</p>
+      <ol>
+        <li>The function accesses no Python objects</li>
+        <li>The function does not call anything that accesses Python objects</li>
+      </ol>
+      </section>
+      <section>
+      <h1>Thanks :)</h1>
+      </section>
+    </div>
+  </div>
+
+  <script src="lib/js/head.min.js"></script>
+  <script src="js/reveal.js"></script>
+
+  <script>
+    // Full list of configuration options available at:
+    // https://github.com/hakimel/reveal.js#configuration
+    Reveal.initialize({
+      controls: true,
+      progress: true,
+      history: true,
+      center: true,
+      transition: 'slide', // none/fade/slide/convex/concave/zoom
+      // Optional reveal.js plugins
+      dependencies: [
+      { src: 'lib/js/classList.js', condition: function() { return !document.body.classList; } },
+      { src: 'plugin/markdown/marked.js', condition: function() { return !!document.querySelector( '[data-markdown]' ); } },
+      { src: 'plugin/markdown/markdown.js', condition: function() { return !!document.querySelector( '[data-markdown]' ); } },
+      { src: 'plugin/highlight/highlight.js', async: true, condition: function() { return !!document.querySelector( 'pre code' ); }, callback: function() { hljs.initHighlightingOnLoad(); } },
+      { src: 'plugin/zoom-js/zoom.js', async: true },
+      { src: 'plugin/notes/notes.js', async: true }
+      ]
+      });
+    </script>
+  </body>
